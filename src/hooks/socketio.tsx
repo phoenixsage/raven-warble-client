@@ -18,7 +18,7 @@ const useSocket = (namespace = '/', implicitConnect = false) => {
   }, [namespace]);
 
   const connect: (ppt?: Partial<ManagerOptions & SocketOptions>) => Socket = (options = {})=>{
-    const socketIo = io(import.meta.env.VITE_SOCKET_BASE_URL + namespace, {
+    const socketIo = io(SOCKET_SERVER_URL + namespace, {
         transports: ['websocket'],
         ...options
       });

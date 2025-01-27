@@ -20,13 +20,14 @@ type TransactionsStore = {
     allTransactions: Transaction[],
     filter?: string,
     total: number,
-    setFilter: (a: Status) => void,
+    setFilter: (a: string) => void,
     addTransaction: (a: Transaction) => void,
     setTransactions: (a: Transaction[]) => void,
 }
 
 const useTransactionsStore = create<TransactionsStore>(computed((set, get) => ({
     transactions: new Map<string, Transaction>(),
+    filter: '',
     setFilter: (status) => set((state) => ({ ...state, status })),
     addTransaction: (a: Transaction) => set((state) => {
         const transactions = state.transactions;

@@ -3,12 +3,10 @@ import './App.css'
 import useSocket from './hooks/socketio'
 import useTransactionsStore, { Transaction } from './stores/tranactions'
 import TransactionCard from './components/transactionCard'
-import { AnimatePresence } from 'motion/react'
 
 
 function App() {
-  const [count, setCount] = useState(0)
-  const { socket, connected, listenToEvent, sendMessage, connect } = useSocket()
+  const { socket, connected, connect } = useSocket()
   const notifyAudio = useRef<HTMLAudioElement>(null)
   const [credentials, setWarbleCredentials] = useState<{ acc: string | null, key: string | null }>({ acc: null, key: null })
   const transactions = useTransactionsStore(state => state.allTransactions)
@@ -143,7 +141,7 @@ function App() {
               </h1>
               <label>
                 Status:
-                <select value={filter} >
+                <select value={filter} onChange={(event)=> setFilter(event.target.value)}>
                   <option value=""
                   >All</option>
                   {possibleStatus.map(item=><option key={item} value={item}>{item.toUpperCase()}</option>)}
