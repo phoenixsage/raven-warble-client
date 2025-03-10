@@ -1,0 +1,11 @@
+:80 {
+    root * /var/app
+    encode gzip
+    file_server {
+        hide .git
+    }
+	
+    header {
+        ?Cache-Control "max-age=1800"
+    }
+}
