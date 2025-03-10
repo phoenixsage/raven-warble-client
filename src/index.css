@@ -6,6 +6,6 @@
 }
 
 .button-primary {
-  @apply bg-teal-600 hover:bg-teal-600 shadow border-teal-700 text-white hover:text-gray-200 disabled:bg-gray-500 disabled:pointer-events-none;
+  @apply bg-gray-800 hover:bg-gray-600 shadow text-white hover:text-gray-200 disabled:bg-gray-400 disabled:pointer-events-none;
 }
 

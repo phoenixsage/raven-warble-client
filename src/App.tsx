@@ -3,50 +3,149 @@ import './App.css'
 import useSocket from './hooks/socketio'
 import useTransactionsStore, { Transaction } from './stores/tranactions'
 import TransactionCard from './components/transactionCard'
+import ConnectedStream from './components/ConnectedChirp'
 
 
 function App() {
   const { socket, connected, connect } = useSocket()
   const notifyAudio = useRef<HTMLAudioElement>(null)
-  const [credentials, setWarbleCredentials] = useState<{ acc: string | null, key: string | null }>({ acc: null, key: null })
+  const [credentials, setStreamCredentials] = useState<{ acc: string | null, key: string | null }>({ acc: null, key: null })
+  const [authError, setAuthError] = useState<string|null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const streams = useTransactionsStore(state=>state.allStreams)
+  const setStreams = useTransactionsStore(state=>state.addStream)
+  const removeStream = useTransactionsStore(state=>state.removeStream)
+  const clearStreams = useTransactionsStore(state=>state.removeStreams)
   const transactions = useTransactionsStore(state => state.allTransactions)
   const totalTransactions = useTransactionsStore(state => state.total)
   const addTransaction = useTransactionsStore(state => state.addTransaction)
+  const addTransactions = useTransactionsStore(state => state.addTransactions)
   const setFilter = useTransactionsStore(state => state.setFilter)
   const filter = useTransactionsStore(state => state.filter)
-  const possibleStatus = ['incomplete', 'completed', 'failed']
+  const possibleStatus = ['incomplete', 'complete', 'failed']
+
+
   const connectSocket = () => {
+    setConnecting(true)
+    setAuthError(null)
     const socket = connect({
       auth: async (cb) => {
-        // todo: add endpoint to retrieve transactions if is successful
         cb(credentials)
       }
     })
+
     socket.on(`new_transaction`, (data: Transaction) => {
-      console.log(data)
-      notifyUser(data)
+      if(data.status === 'complete'){
+        notifyUser(data)
+      }
       addTransaction(data);
     })
 
     socket.on('connect_error', (err) => {
-      console.log(err.message)
+      setAuthError(err.message);
+      setConnecting(false)
+    })
+
+    socket.on('connect',()=>{
+      setAuthError(null);
+      setConnecting(false)
+      setStreamCredentials({ acc: null, key: null })
+    })
+
+    socket.on('error',(message)=>{
+      setAuthError(message);
+    })
+
+
+    socket.on('stream-history', (data: any[])=>{
+      addTransactions(data)
+    })
+
+    socket.on('new-active-stream', (data)=>{
+      setStreamCredentials({ acc: null, key: null })
+      setStreams({acc: data, connected: true})
+      setConnecting(false)
+    })
+
+    socket.on('leave:room', (data)=>{
+      removeStream(data)
     })
   }
 
   const notifyUser = (data: Transaction) => {
     playSound();
-    new Notification(`You received ${data.amount} from ${data.sender} | ${data.senderBank}`,{
+    const title = `You received ${data.amount} from ${data.sender} | ${data.senderBank}`;
+    const options = {
       body: data.narration,
-      icon: '/logo.svg'
-    })
+      icon: '/logo.svg',
+    };
+    try {
+      Notification.requestPermission().then((value)=>{
+        console.log(value)
+        if(value !== 'granted') return;
+        
+        if(!('serviceWorker' in navigator)) {
+          new Notification(title, options)
+        }
+
+        navigator.serviceWorker.ready.then(
+        async (registration)=>{
+          registration.showNotification(title,{
+            ...options,
+            //@ts-ignore
+            vibrate: [200, 100, 200, 100, 200, 100, 200],
+            tag: "new-transaction"
+          })
+        
+        } 
+        )
+      })
+    } catch (error) {
+      console.log(error)
+    }
+    
   }
 
   const playSound  =  ()=>{ 
     return notifyAudio.current?.play()
   }
 
+  const addStream = ()=>{
+
+    if(streams.length === 0 ){
+      setStreams({acc: `${credentials.acc}`, connected: false})
+      return connectSocket()
+    }
+
+    if(streams.findIndex(stream =>stream.acc === credentials.acc) >= 0) {
+      setConnecting(false)
+      return setAuthError("Stream already exists")
+    }
+
+    setConnecting(true)
+    setAuthError(null)
+    socket?.emit('join:room', credentials)
+    setStreams({acc: `${credentials.acc}`, connected: false})
+    setTimeout(()=>clearInActiveStream(), 20000)
+  }
+
+  const clearInActiveStream = ()=>{
+    console.log("clean up: ", streams)
+    streams.forEach(stream=>{
+      if(stream.connected) return;
+      removeStream(stream.acc)
+    })
+  }
+
   const cleanUpSocketConnection = () => {
     socket?.disconnect()
+    clearStreams()
+  }
+
+  const disconnectStream = (acc: string)=>{
+    socket?.emit("leave:room", acc)
+    setStreams({acc, connected: false})
+    clearInActiveStream()
   }
 
   const registerNotificaion = () => {
@@ -67,17 +166,22 @@ function App() {
   useEffect(()=>{
     const audio = new Audio("/notify.mp3")
     audio.addEventListener('canplaythrough', ()=>{
-      console.log("notification sound loaded.")
+   
     }, false)
   },[notifyAudio])
 
   useEffect(()=>{
     registerNotificaion()
   },[])
+
+  useEffect(()=>{
+    clearInActiveStream()
+  }, [authError])
+
   return (
     <>
       <header className='flex items-center relative'>
-        <a href="/" className={`logo ${connected? 'text-teal-600': 'text-gray-500'}`} >
+        <a href="/" className={`logo ${connected? 'text-gray-800': 'text-gray-500'}`} >
           <svg className='w-24 fill-current transition duration-700 ease-linear' viewBox="0 0 97 44" xmlns="http://www.w3.org/2000/svg">
             <path d="M4.8581 1.16735C5.88609 2.78307 7.05749 4.26549 8.22686 5.7681C10.8039 9.08839 13.3568 12.4491 16.1277 15.6118C16.9719 16.5752 17.9292 17.3972 19.2178 17.7022C24.388 18.914 28.7767 15.1675 29.3766 10.1063C29.9542 5.23693 26.6601 0.0767464 21.4373 0.0545304C16.0032 0.0343339 10.5676 0.0161571 5.13075 0C4.44407 0 4.44407 0.385752 4.65815 0.807857C4.71845 0.931115 4.78519 1.05111 4.8581 1.16735ZM41.5146 42.4125C41.1248 42.047 40.735 41.6814 40.3412 41.3219C38.0247 39.1811 13.7344 19.5905 2.88288 1.3673C2.81817 1.25126 2.75952 1.13194 2.70718 1.00982C2.69192 0.966167 2.66506 0.927494 2.62947 0.897959C2.59389 0.868425 2.55093 0.849145 2.50521 0.842191C2.30325 0.811897 2.2366 0.977507 2.15581 1.10676C1.83469 1.60966 1.70139 2.18727 1.54992 2.75075C0.616845 6.29725 0.212916 9.92049 0.0574037 13.568C-0.0432272 15.7686 -0.011529 17.9733 0.152327 20.1702C0.380547 23.0522 0.845065 25.8858 1.80641 28.6204C2.71323 31.2015 4.02802 33.5362 6.15673 35.3215C7.47153 36.4027 9.02406 37.1564 10.6868 37.5209C11.0382 37.6037 11.0907 37.5391 10.9695 37.1857C10.9493 37.1231 10.9251 37.0625 10.9029 37.0019C9.77458 34.0855 8.64493 31.1698 7.51393 28.2548C7.18674 27.4086 6.85552 26.5644 6.52632 25.7181C6.66111 25.7976 6.77042 25.9139 6.84139 26.0534C7.88352 27.8872 8.91556 29.7291 9.96779 31.5569C11.0826 33.4978 12.3207 35.3438 14.0333 36.8201C15.5402 38.1172 17.3103 39.0722 19.2218 39.6193C20.5829 40.0321 21.9858 40.2916 23.4045 40.3929C23.5176 40.3929 23.6529 40.4716 23.7337 40.3626C23.8145 40.2535 23.7014 40.1445 23.6428 40.0495C23.0369 39.0821 22.4169 38.1127 21.7968 37.1493L16.8871 29.5191C15.4585 27.3056 14.0374 25.0907 12.6236 22.8745L10.9453 20.2489L11.018 20.2085C11.0685 20.2671 11.121 20.3216 11.1675 20.3822C12.5812 22.1454 13.892 23.9711 15.235 25.7807C16.9416 28.0831 18.6543 30.3775 20.5204 32.5566C21.5303 33.7341 22.5623 34.8914 23.6731 35.9719C25.1984 37.4937 26.8761 38.8547 28.6798 40.0334C29.8641 40.7941 31.1195 41.438 32.4282 41.9561C33.9091 42.5426 35.4694 42.9041 37.0573 43.0285C38.5115 43.1435 39.9746 43.0531 41.4035 42.7599C41.5025 42.7397 41.6297 42.7458 41.658 42.6185C41.6863 42.4913 41.5772 42.463 41.5146 42.4125Z"></path>
             <path d="M45.0789 13.0425H38.3495L36.758 24.2697L36.7237 24.4999C36.7237 24.5706 36.7237 24.6433 36.7237 24.714C36.7223 25.0215 36.7816 25.3262 36.8982 25.6107C37.0148 25.8952 37.1863 26.154 37.4029 26.3721C37.6196 26.5903 37.8772 26.7636 38.1609 26.8821C38.4446 27.0006 38.7489 27.0621 39.0563 27.0629H40.2136L40.26 26.7276L40.771 23.1367L40.973 21.6664H42.5422L43.8267 25.3199L43.9459 25.6572C44.1159 26.0467 44.3889 26.3825 44.7355 26.6284C45.0821 26.8743 45.4892 27.021 45.913 27.0528H48.8758L48.2942 25.5198L47.2096 22.6661L46.5714 21.0039C47.2169 20.6184 47.7638 20.0881 48.169 19.4549C48.5742 18.8327 48.8389 18.1297 48.9445 17.3948C49.1142 16.1521 48.8301 15.1153 48.0922 14.2846C47.3544 13.4538 46.3499 13.0398 45.0789 13.0425ZM41.3123 19.3216L41.8616 15.3772H43.8267C44.0338 15.3647 44.2404 15.4082 44.4248 15.5031C44.6092 15.598 44.7647 15.7407 44.8749 15.9164C45.1032 16.278 45.1738 16.791 45.0769 17.4574C44.9072 18.7002 44.3054 19.3216 43.2713 19.3216H41.3123Z" ></path>
@@ -88,8 +192,8 @@ function App() {
             <path d="M65.1076 16.561H63.0415L63.2435 17.486L64.0008 20.9558C64.3139 21.1241 64.6612 21.2188 65.0164 21.2327C65.3716 21.2466 65.7252 21.1792 66.0504 21.0358C66.3757 20.8924 66.6639 20.6767 66.8932 20.4051C67.1224 20.1334 67.2867 19.8131 67.3735 19.4684C67.4603 19.1237 67.4674 18.7638 67.3941 18.416C67.3208 18.0682 67.1691 17.7417 66.9506 17.4613C66.7321 17.181 66.4526 16.9541 66.1332 16.7981C65.8138 16.6421 65.463 16.561 65.1076 16.561Z" ></path>
           </svg>
         </a>
-        <h1 title={connected? "Connected": "Offline"} className={`flex items-center font-bold text-xl ${connected? 'text-teal-600 animate-bounce top-4': 'text-gray-500 top-3'} right-20  relative`}>
-           <span> Warble</span>
+        <h1 title={connected? "Connected": "Offline"} className={`flex items-center font-bold text-xl ${connected? 'text-gray-800 animate-bounce top-4': 'text-gray-500 top-3'} right-20  relative`}>
+           <span> Stream</span>
            <svg 
             xmlns="http://www.w3.org/2000/svg" 
             fill="none" viewBox="0 0 24 24" 
@@ -103,34 +207,53 @@ function App() {
 
       <section>
         <article className='grid grid-cols-2 gap-2  bg-gray-100 p-2'>
-        
             <label className='block' htmlFor="acc-no">
               <span>Acc No</span>
              <input placeholder='enter acc no'
-                    disabled={connected}
+                    disabled={connecting}
                     id="acc-no" value={credentials.acc ?? ''} 
-                    onChange={(event) => setWarbleCredentials((state) => ({ ...state, acc: event.target.value, }))}
+                    onChange={(event) => setStreamCredentials((state) => ({ ...state, acc: event.target.value, }))}
                     className='mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50'
              />
           
             </label>
 
           
-            <label className='block' htmlFor="warble-key">
-              <span>Warble Key</span>
+            <label className='block' htmlFor="Stream-key">
+              <span>Stream Key</span>
               <input type='password'
                 placeholder='enter key'
-                disabled={connected}
-                id="warble-key" value={credentials.key ?? ''}
-                onChange={(event) => setWarbleCredentials((state) => ({ ...state, key: event.target.value, }))}
+                disabled={connecting}
+                id="Stream-key" value={credentials.key ?? ''}
+                onChange={(event) => setStreamCredentials((state) => ({ ...state, key: event.target.value, }))}
                 className='mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50'
               />
             </label>
-          <div className="card col-span-2">
-            <button className={`button button-primary`} disabled={!credentials.acc?.length || !credentials.key?.length} onClick={connected ? cleanUpSocketConnection : connectSocket}>
-              {!connected ? 'Connect to ' : 'Disconnect from'} Stream
+          <div className="card col-span-2 justify-between flex-col md:flex-row flex space-x-3 items-center">
+            <button className={`button  button-primary`} disabled={!credentials.acc?.length || !credentials.key?.length} onClick={addStream}>
+              {connecting ? 'Connecting': 'Connect' } 
             </button>
+            {authError !== null && 
+              <div className=" text-red-400 text-xs">
+               <span className='font-bold'>Error: </span> <span>{authError}</span>
+              </div>
+              }
           </div>
+          
+        <div className='flex space-x-2'>
+            <div>
+              {streams.length > 0 &&<button className={`button  button-primary`} disabled={connecting} onClick={cleanUpSocketConnection}>
+                { 'Disconnect All Streams'} 
+              </button>}
+              <span>Connected Streams:</span>
+            </div>
+        </div>
+        <div className='grid gap-2 grid-cols-2 md:grid-cols-4'>
+            
+            {
+              streams.map(stream=><ConnectedStream key={stream.acc} stream={stream} disconnect={()=>disconnectStream(stream.acc)} />)
+            }
+        </div>
         </article>
 
         <div className='space-y-3 p-3'>
@@ -140,8 +263,12 @@ function App() {
                 <span> Transactions ({totalTransactions}) </span> <small className='text-xs italic font-light'>{connected? 'connected': 'not connected'}</small>
               </h1>
               <label>
-                Status:
-                <select value={filter} onChange={(event)=> setFilter(event.target.value)}>
+                Status: 
+                <select 
+                  value={filter} 
+                  onChange={(event)=> setFilter(event.target.value)}
+                  className='rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50'
+                >
                   <option value=""
                   >All</option>
                   {possibleStatus.map(item=><option key={item} value={item}>{item.toUpperCase()}</option>)}
@@ -149,7 +276,7 @@ function App() {
               </label>
             </div>
             <section className='h-[60svh] overflow-y-auto overflow-x-hidden space-y-2'>
-              {transactions.map((item) => <TransactionCard key={item.sessionId} transaction={item} />)}
+              {transactions.map((item) => <TransactionCard key={item.sessionId+item.status} transaction={item} />)}
             </section>
           </>}
         </div>
